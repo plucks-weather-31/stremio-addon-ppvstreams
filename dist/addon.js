@@ -60,27 +60,43 @@ const manifest = {
     name: 'ppvstreams',
     description: 'Stream your favorite live sports, featuring football (soccer), NFL, basketball, wrestling, darts, and more. Enjoy real-time access to popular games and exclusive events, all conveniently available in one place. This add-on is based on PPV Land.',
 };
-function getLiveFootballCatalog(id) {
+function getNFLGames() {
     return __awaiter(this, void 0, void 0, function* () {
-        var _a;
         try {
+            const response = yield fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
+
+            if (!response.ok) {
+                throw new Error(`ESPN API returned ${response.status}`);
+            }
+
+            const data = yield response.json();
             const now = Date.now();
-            const thirtyMinutes = 30 * 60 * 1000;
-            const matches = yield fetch('https://ppv.land/api/streams');
-            const response = yield matches.json();
-            const results = (_a = response.streams) !== null && _a !== void 0 ? _a : [];
-            const live = results
-                .filter(a => a.category.toLowerCase() == id.toLowerCase())
-                .map(a => a.streams)
-                .flat(2).filter(stream => {
-                const startsAtMs = stream.starts_at * 1000; // Convert start time to milliseconds
-                // Convert end time to milliseconds
-                return (startsAtMs <= now) || // Currently in progress
-                    (startsAtMs > now && startsAtMs <= now + thirtyMinutes); // Starts within 30 minutes
-            });
-            return live;
-        }
-        catch (error) {
+            const next24Hours = now + (24 * 60 * 60 * 1000);
+
+            return (data.events || [])
+                .filter(event => {
+                    const gameTime = new Date(event.date).getTime();
+                    return gameTime >= now && gameTime <= next24Hours;
+                })
+                .map(event => {
+                    const competition = event.competitions?.[0];
+                    const home = competition?.competitors?.find(
+                        team => team.homeAway === 'home'
+                    );
+                    const away = competition?.competitors?.find(
+                        team => team.homeAway === 'away'
+                    );
+
+                    return {
+                        id: `espn-nfl-${event.id}`,
+                        name: event.name,
+                        poster: home?.team?.logo ||
+                            'https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png',
+                        gameId: event.id,
+                        startTime: event.date
+                    };
+                });
+        } catch (error) {
             Sentry.captureException(error);
             return [];
         }
@@ -132,24 +148,26 @@ function getMovieMetaDetals(id) {
 }
 const builder = new stremio_addon_sdk_1.addonBuilder(manifest);
 builder.defineCatalogHandler((_a) => __awaiter(void 0, [_a], void 0, function* ({ id }) {
-    const results = (yield getLiveFootballCatalog(id)).map(resp => ({
-        id: resp.id.toString(),
-        name: resp.name,
-        type: 'tv',
-        background: resp.poster,
-        description: resp.name,
-        poster: resp.poster,
-        posterShape: 'landscape',
-        logo: resp.poster,
-    }));
+    if (id === 'NFL') {
+        const results = (yield getNFLGames()).map(game => ({
+            id: game.id,
+            name: game.name,
+            type: 'tv',
+            background: game.poster,
+            description: `NFL game starting ${new Date(game.startTime).toLocaleString()}`,
+            poster: game.poster,
+            posterShape: 'landscape',
+            logo: game.poster,
+        }));
+
+        return {
+            metas: results,
+        };
+    }
+
+    const results = [];
     return {
         metas: results,
-    };
-}));
-builder.defineMetaHandler((_a) => __awaiter(void 0, [_a], void 0, function* ({ id }) {
-    const meta = yield getMovieMetaDetals(id);
-    return {
-        meta,
     };
 }));
 builder.defineStreamHandler((_a) => __awaiter(void 0, [_a], void 0, function* ({ id }) {
